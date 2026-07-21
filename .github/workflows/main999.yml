@@ -1,0 +1,153 @@
+name: Build ذكي APK
+
+on: workflow_dispatch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        run: |
+          mkdir -p $HOME/android-sdk/cmdline-tools/latest
+          cd $HOME/android-sdk/cmdline-tools/latest
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q commandlinetools-linux-*.zip
+          rm commandlinetools-linux-*.zip
+          mv cmdline-tools/* . 
+          rm -rf cmdline-tools
+          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+          yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses
+          $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Create Project
+        run: |
+          mkdir -p app/src/main/java/com/dhaki/ai
+          mkdir -p app/src/main/res/layout
+
+          # ملف 1: gradle.properties
+          cat > gradle.properties << 'EOF'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          EOF
+
+          # ملف 2: settings.gradle - مبسط جدا
+          cat > settings.gradle << 'EOF'
+          rootProject.name = "ذكي"
+          include ':app'
+          EOF
+
+          # ملف 3: build.gradle
+          cat > build.gradle << 'EOF'
+          buildscript {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath "com.android.tools.build:gradle:8.2.2"
+                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22"
+              }
+          }
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          EOF
+
+          # ملف 4: app/build.gradle
+          cat > app/build.gradle << 'EOF'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.dhaki.ai'
+              compileSdk 34
+              defaultConfig {
+                  applicationId "com.dhaki.ai"
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+              buildFeatures { viewBinding true }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = '17' }
+          }
+          dependencies {
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+              implementation 'com.google.android.material:material:1.11.0'
+              implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+              implementation 'com.google.code.gson:gson:2.11.0'
+          }
+          EOF
+
+          # ملف 5: AndroidManifest
+          cat > app/src/main/AndroidManifest.xml << 'EOF'
+          <manifest package="com.dhaki.ai" xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <application android:label="ذكي" android:theme="@style/Theme.Material3.DayNight">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          # ملف 6: layout
+          cat > app/src/main/res/layout/activity_main.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent" android:layout_height="match_parent"
+              android:orientation="vertical" android:padding="20dp">
+              <EditText android:id="@+id/etInput" android:layout_width="match_parent" android:layout_height="100dp" android:hint="اسأل ذكي"/>
+              <Button android:id="@+id/btnSend" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="إرسال"/>
+              <TextView android:id="@+id/tvResult" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="20dp"/>
+          </LinearLayout>
+          EOF
+
+          # ملف 7: MainActivity
+          cat > app/src/main/java/com/dhaki/ai/MainActivity.kt << 'KOTLIN'
+          package com.dhaki.ai
+          import android.os.Bundle
+          import android.widget.*
+          import androidx.appcompat.app.AppCompatActivity
+          class MainActivity : AppCompatActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+                  findViewById<Button>(R.id.btnSend).setOnClickListener {
+                      findViewById<TextView>(R.id.tvResult).text = "شغال 100% الحمدلله"
+                  }
+              }
+          }
+          KOTLIN
+
+      - name: Install Gradle
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.5-bin.zip
+          unzip -q gradle-8.5-bin.zip
+          echo "$PWD/gradle-8.5/bin" >> $GITHUB_PATH
+
+      - name: Build APK
+        run: gradle assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ذكي-اخيرا
+          path: app/build/outputs/apk/debug/app-debug.apk

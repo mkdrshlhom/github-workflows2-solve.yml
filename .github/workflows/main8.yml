@@ -1,0 +1,766 @@
+name: Build Problem Analyzer Pro Signed
+
+on: workflow_dispatch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        run: |
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          cd $HOME/android-sdk/cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q commandlinetools-linux-*.zip
+          rm commandlinetools-linux-*.zip
+          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+          yes | $HOME/android-sdk/cmdline-tools/cmdline-tools/bin/sdkmanager --licenses
+          $HOME/android-sdk/cmdline-tools/cmdline-tools/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Create project structure and source code
+        run: |
+          mkdir -p app/src/main/java/com/example/problemanalyzer
+          mkdir -p app/src/main/res/layout
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/xml
+
+          cat > settings.gradle << 'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "ProblemAnalyzerPro"
+          include ':app'
+          EOF
+
+          cat > build.gradle << 'EOF'
+          plugins {
+              id 'com.android.application' version '8.2.0' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.20' apply false
+          }
+          EOF
+
+          cat > app/build.gradle << 'EOF'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.example.problemanalyzer'
+              compileSdk 34
+              defaultConfig {
+                  applicationId "com.example.problemanalyzer"
+                  minSdk 21
+                  targetSdk 34
+                  versionCode 5
+                  versionName "5.0"
+              }
+              buildFeatures { viewBinding true }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
+              }
+              kotlinOptions {
+                  jvmTarget = "1.8"
+              }
+          }
+          dependencies {
+              implementation 'androidx.core:core-ktx:1.12.0'
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+              implementation 'com.google.android.material:material:1.10.0'
+              implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+              implementation 'com.google.code.gson:gson:2.10.1'
+              implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+              implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
+              implementation 'androidx.activity:activity-ktx:1.8.0'
+              implementation 'androidx.fragment:fragment-ktx:1.6.1'
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml << 'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.CAMERA"/>
+              <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="32"/>
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
+              <uses-feature android:name="android.hardware.camera" android:required="false"/>
+              <uses-feature android:name="android.hardware.microphone" android:required="false"/>
+              <application
+                  android:allowBackup="true"
+                  android:label="محلل المشكلات الشامل"
+                  android:theme="@style/Theme.AppCompat.Light.DarkActionBar"
+                  android:supportsRtl="true">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <activity android:name=".SettingsActivity" android:label="إعدادات API"/>
+                  <provider
+                      android:name="androidx.core.content.FileProvider"
+                      android:authorities="${applicationId}.fileprovider"
+                      android:exported="false"
+                      android:grantUriPermissions="true">
+                      <meta-data
+                          android:name="android.support.FILE_PROVIDER_PATHS"
+                          android:resource="@xml/file_paths"/>
+                  </provider>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/res/xml/file_paths.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <paths>
+              <cache-path name="cache" path="."/>
+              <external-cache-path name="external_cache" path="."/>
+          </paths>
+          EOF
+
+          cat > app/src/main/res/values/strings.xml << 'EOF'
+          <resources>
+              <string name="app_name">محلل المشكلات الشامل</string>
+          </resources>
+          EOF
+
+          # ========== التخطيط الرئيسي مع زر الحذف ==========
+          cat > app/src/main/res/layout/activity_main.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:orientation="vertical"
+              android:padding="16dp">
+
+              <TextView
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="🔍 صِف مشكلتك (ويمكنك إرفاق وسائط)"
+                  android:textSize="18sp"
+                  android:textStyle="bold"
+                  android:layout_marginBottom="8dp"/>
+
+              <EditText
+                  android:id="@+id/etProblem"
+                  android:layout_width="match_parent"
+                  android:layout_height="100dp"
+                  android:hint="مثال: جهاز الكمبيوتر يصدر صوت طنين عند التشغيل..."
+                  android:gravity="top"
+                  android:inputType="textMultiLine"
+                  android:scrollbars="vertical"/>
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="horizontal"
+                  android:layout_marginTop="8dp"
+                  android:gravity="center">
+
+                  <Button
+                      android:id="@+id/btnCamera"
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:text="📷 صورة"
+                      android:textSize="14sp"
+                      android:layout_marginEnd="4dp"/>
+
+                  <Button
+                      android:id="@+id/btnAudio"
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:text="🎤 صوت"
+                      android:textSize="14sp"
+                      android:layout_marginEnd="4dp"/>
+
+                  <Button
+                      android:id="@+id/btnVideo"
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:text="🎥 فيديو"
+                      android:textSize="14sp"/>
+              </LinearLayout>
+
+              <!-- صف معلومات المرفق + زر الحذف -->
+              <LinearLayout
+                  android:id="@+id/layoutAttachmentInfo"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="horizontal"
+                  android:layout_marginTop="8dp"
+                  android:visibility="gone">
+
+                  <TextView
+                      android:id="@+id/tvAttachmentInfo"
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:textSize="14sp"
+                      android:textColor="@android:color/holo_blue_dark"/>
+
+                  <Button
+                      android:id="@+id/btnRemoveAttachment"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:text="❌ حذف"
+                      android:textSize="14sp"/>
+              </LinearLayout>
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="horizontal"
+                  android:layout_marginTop="12dp">
+
+                  <Button
+                      android:id="@+id/btnAnalyze"
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:text="تحليل المشكلة"
+                      android:textSize="16sp"/>
+
+                  <Button
+                      android:id="@+id/btnSettings"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:text="⚙️"
+                      android:textSize="18sp"
+                      android:layout_marginStart="8dp"/>
+              </LinearLayout>
+
+              <ProgressBar
+                  android:id="@+id/progressBar"
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:layout_gravity="center"
+                  android:layout_marginTop="16dp"
+                  android:visibility="gone"/>
+
+              <ScrollView
+                  android:layout_width="match_parent"
+                  android:layout_height="0dp"
+                  android:layout_weight="1"
+                  android:layout_marginTop="16dp">
+
+                  <TextView
+                      android:id="@+id/tvResult"
+                      android:layout_width="match_parent"
+                      android:layout_height="wrap_content"
+                      android:textSize="16sp"
+                      android:lineSpacingExtra="4dp"
+                      android:textIsSelectable="true"/>
+              </ScrollView>
+
+              <!-- توقيع المطور -->
+              <TextView
+                  android:id="@+id/tvSignature"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:textSize="16sp"
+                  android:gravity="center"
+                  android:layout_marginTop="12dp"/>
+          </LinearLayout>
+          EOF
+
+          cat > app/src/main/res/layout/activity_settings.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:orientation="vertical"
+              android:padding="16dp">
+              <TextView
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="مفتاح Gemini API"
+                  android:textSize="18sp"
+                  android:textStyle="bold"/>
+              <EditText
+                  android:id="@+id/etApiKey"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:hint="أدخل مفتاح API الخاص بك"
+                  android:inputType="textPassword"
+                  android:layout_marginTop="8dp"/>
+              <Button
+                  android:id="@+id/btnSave"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:text="حفظ المفتاح"
+                  android:layout_marginTop="16dp"/>
+              <TextView
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="احصل على مفتاح مجاني من:\nhttps://aistudio.google.com/apikey"
+                  android:layout_marginTop="24dp"
+                  android:textSize="14sp"
+                  android:textColor="@android:color/darker_gray"/>
+          </LinearLayout>
+          EOF
+
+          # ========== كود النشاط الرئيسي مع الحذف والتوقيع الملون ==========
+          cat > app/src/main/java/com/example/problemanalyzer/MainActivity.kt << 'KOTLIN'
+          package com.example.problemanalyzer
+
+          import android.Manifest
+          import android.content.Intent
+          import android.content.SharedPreferences
+          import android.content.pm.PackageManager
+          import android.graphics.Bitmap
+          import android.graphics.Color
+          import android.media.MediaMetadataRetriever
+          import android.net.Uri
+          import android.os.Build
+          import android.os.Bundle
+          import android.text.SpannableString
+          import android.text.style.ForegroundColorSpan
+          import android.util.Base64
+          import android.view.View
+          import android.widget.*
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.core.content.ContextCompat
+          import androidx.core.content.FileProvider
+          import androidx.lifecycle.lifecycleScope
+          import com.google.gson.Gson
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
+          import okhttp3.*
+          import okhttp3.MediaType.Companion.toMediaType
+          import okhttp3.RequestBody.Companion.toRequestBody
+          import java.io.*
+          import java.text.SimpleDateFormat
+          import java.util.*
+
+          class MainActivity : AppCompatActivity() {
+              private lateinit var etProblem: EditText
+              private lateinit var btnCamera: Button
+              private lateinit var btnAudio: Button
+              private lateinit var btnVideo: Button
+              private lateinit var btnAnalyze: Button
+              private lateinit var btnSettings: Button
+              private lateinit var progressBar: ProgressBar
+              private lateinit var tvResult: TextView
+              private lateinit var tvAttachmentInfo: TextView
+              private lateinit var btnRemoveAttachment: Button
+              private lateinit var layoutAttachmentInfo: LinearLayout
+              private lateinit var tvSignature: TextView
+              private lateinit var prefs: SharedPreferences
+
+              private var attachedImageUri: Uri? = null
+              private var attachedAudioUri: Uri? = null
+              private var attachedVideoUri: Uri? = null
+              private var photoFile: File? = null
+
+              private val takePictureLauncher = registerForActivityResult(
+                  ActivityResultContracts.TakePicture()
+              ) { success ->
+                  if (success) {
+                      attachedImageUri = photoFile?.let {
+                          FileProvider.getUriForFile(this, "${packageName}.fileprovider", it)
+                      }
+                      attachedAudioUri = null; attachedVideoUri = null
+                      updateAttachmentInfo()
+                  }
+              }
+
+              private val pickImageLauncher = registerForActivityResult(
+                  ActivityResultContracts.GetContent()
+              ) { uri ->
+                  if (uri != null) {
+                      attachedImageUri = uri
+                      attachedAudioUri = null; attachedVideoUri = null
+                      updateAttachmentInfo()
+                  }
+              }
+
+              private val pickAudioLauncher = registerForActivityResult(
+                  ActivityResultContracts.GetContent()
+              ) { uri ->
+                  if (uri != null) {
+                      attachedAudioUri = uri
+                      attachedImageUri = null; attachedVideoUri = null
+                      updateAttachmentInfo()
+                  }
+              }
+
+              private val pickVideoLauncher = registerForActivityResult(
+                  ActivityResultContracts.GetContent()
+              ) { uri ->
+                  if (uri != null) {
+                      attachedVideoUri = uri
+                      attachedImageUri = null; attachedAudioUri = null
+                      updateAttachmentInfo()
+                  }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+
+                  etProblem = findViewById(R.id.etProblem)
+                  btnCamera = findViewById(R.id.btnCamera)
+                  btnAudio = findViewById(R.id.btnAudio)
+                  btnVideo = findViewById(R.id.btnVideo)
+                  btnAnalyze = findViewById(R.id.btnAnalyze)
+                  btnSettings = findViewById(R.id.btnSettings)
+                  progressBar = findViewById(R.id.progressBar)
+                  tvResult = findViewById(R.id.tvResult)
+                  tvAttachmentInfo = findViewById(R.id.tvAttachmentInfo)
+                  btnRemoveAttachment = findViewById(R.id.btnRemoveAttachment)
+                  layoutAttachmentInfo = findViewById(R.id.layoutAttachmentInfo)
+                  tvSignature = findViewById(R.id.tvSignature)
+                  prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+
+                  // تلوين التوقيع
+                  val signatureText = "تم برمجة التطبيق بواسطة زيد قائد 🫠"
+                  tvSignature.text = rainbowText(signatureText)
+
+                  setupMediaButtons()
+                  checkPermissions()
+
+                  // زر حذف المرفقات
+                  btnRemoveAttachment.setOnClickListener {
+                      attachedImageUri = null
+                      attachedAudioUri = null
+                      attachedVideoUri = null
+                      photoFile = null
+                      layoutAttachmentInfo.visibility = View.GONE
+                      tvAttachmentInfo.text = ""
+                  }
+
+                  btnAnalyze.setOnClickListener {
+                      val problemText = etProblem.text.toString().trim()
+                      if (problemText.isEmpty() && attachedImageUri == null &&
+                          attachedAudioUri == null && attachedVideoUri == null) {
+                          Toast.makeText(this, "يرجى كتابة مشكلة أو إرفاق وسائط", Toast.LENGTH_SHORT).show()
+                          return@setOnClickListener
+                      }
+                      val apiKey = prefs.getString("api_key", "")
+                      if (apiKey.isNullOrEmpty()) {
+                          Toast.makeText(this, "يرجى إدخال مفتاح API من الإعدادات أولاً", Toast.LENGTH_LONG).show()
+                          return@setOnClickListener
+                      }
+                      analyzeProblem(problemText, apiKey)
+                  }
+
+                  btnSettings.setOnClickListener {
+                      startActivity(Intent(this, SettingsActivity::class.java))
+                  }
+              }
+
+              private fun setupMediaButtons() {
+                  btnCamera.setOnClickListener { showImageSourceDialog() }
+                  btnAudio.setOnClickListener { pickAudioLauncher.launch("audio/*") }
+                  btnVideo.setOnClickListener { pickVideoLauncher.launch("video/*") }
+              }
+
+              private fun showImageSourceDialog() {
+                  val options = arrayOf("التقاط صورة", "اختيار من المعرض")
+                  val builder = androidx.appcompat.app.AlertDialog.Builder(this)
+                  builder.setTitle("إضافة صورة")
+                  builder.setItems(options) { _, which ->
+                      when (which) {
+                          0 -> capturePhoto()
+                          1 -> pickImageLauncher.launch("image/*")
+                      }
+                  }
+                  builder.show()
+              }
+
+              private fun capturePhoto() {
+                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                      != PackageManager.PERMISSION_GRANTED) {
+                      requestPermissionLauncher.launch(Manifest.permission.CAMERA)
+                      return
+                  }
+                  val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                  val imageFileName = "JPEG_${timeStamp}_"
+                  val storageDir = externalCacheDir ?: cacheDir
+                  photoFile = File.createTempFile(imageFileName, ".jpg", storageDir)
+                  val photoURI = FileProvider.getUriForFile(this, "${packageName}.fileprovider", photoFile!!)
+                  takePictureLauncher.launch(photoURI)
+              }
+
+              private fun updateAttachmentInfo() {
+                  val info = when {
+                      attachedImageUri != null -> "📷 صورة مرفقة"
+                      attachedAudioUri != null -> "🎤 تسجيل صوتي مرفق"
+                      attachedVideoUri != null -> "🎥 فيديو مرفق"
+                      else -> ""
+                  }
+                  tvAttachmentInfo.text = info
+                  if (info.isNotEmpty()) {
+                      layoutAttachmentInfo.visibility = View.VISIBLE
+                  } else {
+                      layoutAttachmentInfo.visibility = View.GONE
+                  }
+              }
+
+              private val requestPermissionLauncher = registerForActivityResult(
+                  ActivityResultContracts.RequestPermission()
+              ) { granted ->
+                  if (granted) {
+                      if (photoFile != null) capturePhoto()
+                  } else {
+                      Toast.makeText(this, "الصلاحية مطلوبة لالتقاط الصور", Toast.LENGTH_SHORT).show()
+                  }
+              }
+
+              private fun checkPermissions() {
+                  val permissionsNeeded = mutableListOf<String>()
+                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                      != PackageManager.PERMISSION_GRANTED)
+                      permissionsNeeded.add(Manifest.permission.RECORD_AUDIO)
+                  if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                      != PackageManager.PERMISSION_GRANTED)
+                      permissionsNeeded.add(Manifest.permission.CAMERA)
+                  if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                      ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+                      != PackageManager.PERMISSION_GRANTED)
+                      permissionsNeeded.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                      if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES)
+                          != PackageManager.PERMISSION_GRANTED)
+                          permissionsNeeded.add(Manifest.permission.READ_MEDIA_IMAGES)
+                  }
+                  if (permissionsNeeded.isNotEmpty()) {
+                      requestPermissions(permissionsNeeded.toTypedArray(), 100)
+                  }
+              }
+
+              private fun analyzeProblem(problemText: String, apiKey: String) {
+                  progressBar.visibility = View.VISIBLE
+                  tvResult.text = ""
+                  btnAnalyze.isEnabled = false
+
+                  lifecycleScope.launch {
+                      try {
+                          val result = withContext(Dispatchers.IO) {
+                              callGeminiApi(problemText, apiKey)
+                          }
+                          tvResult.text = result
+                      } catch (e: Exception) {
+                          tvResult.text = "❌ خطأ: ${e.message}"
+                      } finally {
+                          progressBar.visibility = View.GONE
+                          btnAnalyze.isEnabled = true
+                      }
+                  }
+              }
+
+              private fun callGeminiApi(problemText: String, apiKey: String): String {
+                  val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
+                  val parts = mutableListOf<String>()
+
+                  if (problemText.isNotBlank()) {
+                      val escapedText = Gson().toJson(problemText)
+                      parts.add("""{"text": $escapedText}""")
+                  }
+
+                  if (attachedImageUri != null) {
+                      val base64 = uriToBase64(attachedImageUri!!)
+                      if (base64 != null) {
+                          parts.add("""{"inline_data": {"mime_type": "image/jpeg", "data": "$base64"}}""")
+                      }
+                  }
+
+                  if (attachedAudioUri != null) {
+                      val base64 = uriToBase64(attachedAudioUri!!)
+                      if (base64 != null) {
+                          parts.add("""{"inline_data": {"mime_type": "audio/mpeg", "data": "$base64"}}""")
+                      }
+                  }
+
+                  if (attachedVideoUri != null) {
+                      val frameBase64 = getVideoFrameBase64(attachedVideoUri!!)
+                      if (frameBase64 != null) {
+                          parts.add("""{"inline_data": {"mime_type": "image/jpeg", "data": "$frameBase64"}}""")
+                      }
+                      val audioBase64 = uriToBase64(attachedVideoUri!!)
+                      if (audioBase64 != null) {
+                          parts.add("""{"inline_data": {"mime_type": "audio/mp4", "data": "$audioBase64"}}""")
+                      }
+                  }
+
+                  if (parts.isEmpty()) return "❌ لا توجد وسائط صالحة"
+
+                  val promptPrefix = """
+                  أنت محلل مشكلات خبير. سأزودك بوسائط (نص/صورة/صوت/فيديو) تصف مشكلة. قم بتحليلها وقدم:
+                  1. تحديد المشكلة الأساسية.
+                  2. حلول مقترحة.
+                  3. مشاكل مستقبلية محتملة.
+                  4. أخطاء شائعة عند التطبيق.
+                  5. إجراءات وقائية.
+                  استخدم العربية، وكن عملياً.
+                  """.trimIndent()
+
+                  val prefixedEscaped = Gson().toJson(promptPrefix + "\n\n" + problemText)
+                  parts.add(0, """{"text": $prefixedEscaped}""")
+
+                  val jsonBody = """
+                  {
+                    "contents": [{
+                      "parts": [${parts.joinToString(",\n")}]
+                    }]
+                  }
+                  """.trimIndent()
+
+                  val client = OkHttpClient()
+                  val requestBody = jsonBody.toRequestBody("application/json".toMediaType())
+                  val request = Request.Builder().url(url).post(requestBody).build()
+
+                  val response = client.newCall(request).execute()
+                  if (!response.isSuccessful) {
+                      val errorBody = response.body?.string() ?: "Unknown error"
+                      return "❌ فشل الاتصال بـ API: ${response.code} - $errorBody"
+                  }
+
+                  val responseBody = response.body?.string() ?: return "❌ استجابة فارغة"
+                  val gson = Gson()
+                  val geminiResponse = gson.fromJson(responseBody, GeminiResponse::class.java)
+                  return geminiResponse.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                      ?: "❌ لم يتم العثور على إجابة"
+              }
+
+              private fun uriToBase64(uri: Uri): String? {
+                  return try {
+                      val inputStream = contentResolver.openInputStream(uri) ?: return null
+                      val bytes = inputStream.readBytes()
+                      inputStream.close()
+                      Base64.encodeToString(bytes, Base64.NO_WRAP)
+                  } catch (e: Exception) {
+                      null
+                  }
+              }
+
+              private fun getVideoFrameBase64(videoUri: Uri): String? {
+                  return try {
+                      val retriever = MediaMetadataRetriever()
+                      retriever.setDataSource(this, videoUri)
+                      val bitmap = retriever.frameAtTime
+                      retriever.release()
+                      if (bitmap != null) {
+                          val stream = ByteArrayOutputStream()
+                          bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+                          val byteArray = stream.toByteArray()
+                          Base64.encodeToString(byteArray, Base64.NO_WRAP)
+                      } else null
+                  } catch (e: Exception) {
+                      null
+                  }
+              }
+
+              // دالة لتوليد نص ملون بألوان قوس قزح
+              private fun rainbowText(text: String): SpannableString {
+                  val spannable = SpannableString(text)
+                  val colors = arrayOf(
+                      Color.RED, Color.MAGENTA, Color.BLUE, Color.CYAN,
+                      Color.GREEN, Color.YELLOW, Color.RED
+                  )
+                  for (i in text.indices) {
+                      val color = colors[i % colors.size]
+                      spannable.setSpan(
+                          ForegroundColorSpan(color),
+                          i, i + 1,
+                          SpannableString.SPAN_EXCLUSIVE_EXCLUSIVE
+                      )
+                  }
+                  return spannable
+              }
+          }
+
+          data class GeminiResponse(
+              val candidates: List<Candidate>?
+          )
+          data class Candidate(
+              val content: Content?
+          )
+          data class Content(
+              val parts: List<Part>?
+          )
+          data class Part(
+              val text: String?
+          )
+          KOTLIN
+
+          cat > app/src/main/java/com/example/problemanalyzer/SettingsActivity.kt << 'KOTLIN'
+          package com.example.problemanalyzer
+
+          import android.content.SharedPreferences
+          import android.os.Bundle
+          import android.widget.Button
+          import android.widget.EditText
+          import android.widget.Toast
+          import androidx.appcompat.app.AppCompatActivity
+
+          class SettingsActivity : AppCompatActivity() {
+              private lateinit var etApiKey: EditText
+              private lateinit var btnSave: Button
+              private lateinit var prefs: SharedPreferences
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_settings)
+
+                  etApiKey = findViewById(R.id.etApiKey)
+                  btnSave = findViewById(R.id.btnSave)
+                  prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+
+                  val existingKey = prefs.getString("api_key", "")
+                  etApiKey.setText(existingKey)
+
+                  btnSave.setOnClickListener {
+                      val key = etApiKey.text.toString().trim()
+                      if (key.isEmpty()) {
+                          Toast.makeText(this, "يرجى إدخال مفتاح صالح", Toast.LENGTH_SHORT).show()
+                          return@setOnClickListener
+                      }
+                      prefs.edit().putString("api_key", key).apply()
+                      Toast.makeText(this, "تم حفظ المفتاح بنجاح", Toast.LENGTH_SHORT).show()
+                      finish()
+                  }
+              }
+          }
+          KOTLIN
+
+      - name: Set up Gradle Wrapper
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.5-bin.zip
+          unzip -q gradle-8.5-bin.zip
+          export PATH=$PWD/gradle-8.5/bin:$PATH
+          gradle wrapper --gradle-version 8.5
+          chmod +x gradlew
+
+      - name: Build with Gradle
+        run: |
+          echo "android.useAndroidX=true" > gradle.properties
+          unset ANDROID_HOME
+          export ANDROID_HOME=$HOME/android-sdk
+          export ANDROID_SDK_ROOT=$HOME/android-sdk
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: problem-analyzer-pro-signed
+          path: app/build/outputs/apk/debug/app-debug.apk

@@ -1,0 +1,323 @@
+name: Build ذكي APK
+
+on: workflow_dispatch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        run: |
+          mkdir -p $HOME/android-sdk/cmdline-tools/latest
+          cd $HOME/android-sdk/cmdline-tools/latest
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q commandlinetools-linux-*.zip
+          rm commandlinetools-linux-*.zip
+          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+          yes | $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses
+          $HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Create Project
+        run: |
+          mkdir -p app/src/main/java/com/dhaki/ai
+          mkdir -p app/src/main/res/layout
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/res/xml
+
+          # settings.gradle
+          cat > settings.gradle << 'EOF'
+          rootProject.name = "ذكي"
+          include ':app'
+          EOF
+
+          # build.gradle project
+          cat > build.gradle << 'EOF'
+          plugins {
+              id 'com.android.application' version '8.2.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+          }
+          EOF
+
+          # app/build.gradle
+          cat > app/build.gradle << 'EOF'
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+          android {
+              namespace 'com.dhaki.ai'
+              compileSdk 34
+              defaultConfig {
+                  applicationId "com.dhaki.ai"
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+              buildFeatures { viewBinding true }
+              buildTypes { release { minifyEnabled false } }
+          }
+          dependencies {
+              implementation 'androidx.core:core-ktx:1.12.0'
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+              implementation 'com.google.android.material:material:1.11.0'
+              implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+              implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+              implementation 'com.google.code.gson:gson:2.11.0'
+              implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+          }
+          EOF
+
+          # AndroidManifest
+          cat > app/src/main/AndroidManifest.xml << 'EOF'
+          <manifest package="com.dhaki.ai" xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+              <application
+                  android:label="ذكي"
+                  android:theme="@style/Theme.Dhaki"
+                  android:usesCleartextTraffic="true">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <activity android:name=".SettingsActivity"/>
+              </application>
+          </manifest>
+          EOF
+
+          # Theme
+          cat > app/src/main/res/values/strings.xml << 'EOF'
+          <resources>
+              <string name="app_name">ذكي</string>
+              <string name="hint">اسألني أي شيء...</string>
+              <string name="analyze">إرسال</string>
+              <string name="attach">إرفاق صورة</string>
+              <string name="settings">الإعدادات</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/values/themes.xml << 'EOF'
+          <resources>
+              <style name="Theme.Dhaki" parent="Theme.Material3.DayNight.NoActionBar">
+                  <item name="colorPrimary">#7C3AED</item>
+                  <item name="colorSecondary">#A855F7</item>
+              </style>
+          </resources>
+          EOF
+
+          # Layout
+          cat > app/src/main/res/layout/activity_main.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent" android:layout_height="match_parent"
+              android:padding="16dp" android:background="?android:attr/windowBackground">
+
+              <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
+                  android:orientation="vertical">
+
+                  <com.google.android.material.appbar.MaterialToolbar
+                      android:id="@+id/toolbar" android:layout_width="match_parent"
+                      android:layout_height="wrap_content" android:title="ذكي ✨"
+                      app:menu="@menu/menu_main"/>
+
+                  <ScrollView android:layout_width="match_parent" android:layout_height="0dp"
+                      android:layout_weight="1" android:layout_marginTop="16dp">
+                      <TextView android:id="@+id/tvResult" android:layout_width="match_parent"
+                          android:layout_height="wrap_content" android:textSize="17sp"
+                          android:textAlignment="viewStart" android:lineSpacingExtra="6dp"/>
+                  </ScrollView>
+
+                  <TextView android:id="@+id/tvAttachment" android:layout_width="wrap_content"
+                      android:layout_height="wrap_content" android:textColor="#7C3AED"/>
+
+                  <com.google.android.material.textfield.TextInputLayout
+                      android:layout_width="match_parent" android:layout_height="wrap_content"
+                      style="@style/Widget.Material3.TextInputLayout.OutlinedBox">
+                      <com.google.android.material.textfield.TextInputEditText
+                          android:id="@+id/etInput" android:layout_width="match_parent"
+                          android:layout_height="100dp" android:hint="@string/hint"
+                          android:inputType="textMultiLine"/>
+                  </com.google.android.material.textfield.TextInputLayout>
+
+                  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                      android:orientation="horizontal" android:layout_marginTop="8dp">
+                      <com.google.android.material.button.MaterialButton
+                          android:id="@+id/btnAttach" android:layout_width="0dp"
+                          android:layout_height="wrap_content" android:layout_weight="1"
+                          android:text="@string/attach" style="@style/Widget.Material3.Button.OutlinedButton"/>
+                      <com.google.android.material.button.MaterialButton
+                          android:id="@+id/btnSend" android:layout_width="0dp"
+                          android:layout_height="wrap_content" android:layout_weight="1"
+                          android:text="@string/analyze" android:layout_marginStart="8dp"/>
+                  </LinearLayout>
+
+                  <ProgressBar android:id="@+id/progress" android:layout_width="wrap_content"
+                      android:layout_height="wrap_content" android:layout_gravity="center"
+                      android:visibility="gone" android:layout_marginTop="12dp"/>
+              </LinearLayout>
+          </androidx.coordinatorlayout.widget.CoordinatorLayout>
+          EOF
+
+          cat > app/src/main/res/menu/menu_main.xml << 'EOF'
+          <menu xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:id="@+id/action_settings" android:title="@string/settings" android:showAsAction="never"/>
+          </menu>
+          EOF
+
+          # MainActivity.kt
+          cat > app/src/main/java/com/dhaki/ai/MainActivity.kt << 'KOTLIN'
+          package com.dhaki.ai
+          import android.content.Intent
+          import android.content.SharedPreferences
+          import android.net.Uri
+          import android.os.Bundle
+          import android.util.Base64
+          import android.view.MenuItem
+          import android.view.View
+          import android.widget.Toast
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.appcompat.app.AppCompatActivity
+          import androidx.lifecycleScope
+          import com.dhaki.ai.databinding.ActivityMainBinding
+          import com.google.gson.Gson
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
+          import okhttp3.*
+          import okhttp3.MediaType.Companion.toMediaType
+          import okhttp3.RequestBody.Companion.toRequestBody
+          import java.io.IOException
+
+          class MainActivity : AppCompatActivity() {
+              private lateinit var binding: ActivityMainBinding
+              private lateinit var prefs: SharedPreferences
+              private var imageUri: Uri? = null
+
+              private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                  uri?.let { imageUri = it; binding.tvAttachment.text = "📷 صورة مُرفقة" }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  binding = ActivityMainBinding.inflate(layoutInflater)
+                  setContentView(binding.root)
+                  setSupportActionBar(binding.toolbar)
+                  prefs = getSharedPreferences("dhaki", MODE_PRIVATE)
+
+                  binding.btnAttach.setOnClickListener { pickImage.launch("image/*") }
+                  binding.btnSend.setOnClickListener { sendToAI() }
+              }
+
+              private fun sendToAI() {
+                  val text = binding.etInput.text.toString().trim()
+                  val key = prefs.getString("api_key", "") ?: ""
+                  if (text.isEmpty() && imageUri == null) return Toast.makeText(this, "اكتب سؤالاً أو أرفق صورة", Toast.LENGTH_SHORT).show()
+                  if (key.isEmpty()) return Toast.makeText(this, "أدخل مفتاح API من الإعدادات", Toast.LENGTH_LONG).show()
+
+                  binding.progress.visibility = View.VISIBLE
+                  binding.btnSend.isEnabled = false
+
+                  lifecycleScope.launch {
+                      val res = withContext(Dispatchers.IO) { callMetaAI(text, key) }
+                      binding.tvResult.text = res
+                      binding.progress.visibility = View.GONE
+                      binding.btnSend.isEnabled = true
+                  }
+              }
+
+              private fun callMetaAI(text: String, key: String): String {
+                  return try {
+                      val url = "https://graph.meta.ai/v1/models/llama-3.1-405b-instruct:generate"
+                      val content = mutableListOf<Map<String, Any>>(mapOf("type" to "text", "text" to text))
+                      imageUri?.let {
+                          val base64 = contentResolver.openInputStream(it)!!.readBytes()
+                          content.add(mapOf("type" to "image", "data" to Base64.encodeToString(base64, Base64.NO_WRAP)))
+                      }
+                      val body = Gson().toJson(mapOf("messages" to listOf(mapOf("role" to "user", "content" to content))))
+                      val req = Request.Builder().url(url).addHeader("Authorization", "Bearer $key")
+                          .post(body.toRequestBody("application/json".toMediaType())).build()
+                      OkHttpClient().newCall(req).execute().body?.string() ?: "خطأ"
+                  } catch (e: IOException) { "❌ ${e.message}" }
+              }
+
+              override fun onOptionsItemSelected(item: MenuItem): Boolean {
+                  if (item.itemId == R.id.action_settings) startActivity(Intent(this, SettingsActivity::class.java))
+                  return super.onOptionsItemSelected(item)
+              }
+          }
+          KOTLIN
+
+          # SettingsActivity.kt
+          cat > app/src/main/java/com/dhaki/ai/SettingsActivity.kt << 'KOTLIN'
+          package com.dhaki.ai
+          import android.os.Bundle
+          import android.widget.Toast
+          import androidx.appcompat.app.AppCompatActivity
+          import com.dhaki.ai.databinding.ActivitySettingsBinding
+
+          class SettingsActivity : AppCompatActivity() {
+              private lateinit var binding: ActivitySettingsBinding
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  binding = ActivitySettingsBinding.inflate(layoutInflater)
+                  setContentView(binding.root)
+                  val prefs = getSharedPreferences("dhaki", MODE_PRIVATE)
+                  binding.etKey.setText(prefs.getString("api_key", ""))
+                  binding.btnSave.setOnClickListener {
+                      prefs.edit().putString("api_key", binding.etKey.text.toString()).apply()
+                      Toast.makeText(this, "تم الحفظ ✓", Toast.LENGTH_SHORT).show()
+                      finish()
+                  }
+              }
+          }
+          KOTLIN
+
+          # Settings Layout
+          cat > app/src/main/res/layout/activity_settings.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent" android:layout_height="match_parent"
+              android:orientation="vertical" android:padding="24dp">
+              <TextView android:text="مفتاح Meta AI API" android:textSize="20sp" android:textStyle="bold"/>
+              <com.google.android.material.textfield.TextInputLayout android:layout_width="match_parent"
+                  android:layout_height="wrap_content" android:layout_marginTop="16dp">
+                  <com.google.android.material.textfield.TextInputEditText android:id="@+id/etKey"
+                      android:layout_width="match_parent" android:layout_height="wrap_content"
+                      android:hint="sk-..." android:inputType="textPassword"/>
+              </com.google.android.material.textfield.TextInputLayout>
+              <com.google.android.material.button.MaterialButton android:id="@+id/btnSave"
+                  android:layout_width="match_parent" android:layout_height="wrap_content"
+                  android:text="حفظ" android:layout_marginTop="16dp"/>
+              <TextView android:text="احصل عليه من: developers.facebook.com" android:layout_marginTop="20dp"
+                  android:textSize="13sp" android:textColor="#888"/>
+          </LinearLayout>
+          EOF
+
+      - name: Setup Gradle
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.5-bin.zip
+          unzip -q gradle-8.5-bin.zip
+          ./gradle-8.5/bin/gradle wrapper --gradle-version 8.5
+          chmod +x gradlew
+
+      - name: Build APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ذكي-v1.0-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
